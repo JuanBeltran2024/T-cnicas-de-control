@@ -155,6 +155,27 @@ void loop() {
 
     u_n = u_p + u_i + u_d;
 
+    /*
+    // =====================================================
+    // MEJORA FUTURA: ANTI-WINDUP (CLAMPING)
+    // =====================================================
+    // INSTRUCCIONES DE USO:
+    // Si el péndulo físico presenta un sobrepico masivo tras 
+    // saturarse el motor, comenta las variables "u_i" y "u_n" 
+    // de arriba y descomenta este bloque para activar la protección.
+    
+    float u_i_tentativo = (k_i * ts * e_n_1) + u_n_1_i;
+    float u_n_tentativo = u_p + u_i_tentativo + u_d;
+
+    if ((u_n_tentativo >= Uunits && e_n > 0) || (u_n_tentativo <= 0.0 && e_n < 0)) {
+        u_i = u_n_1_i; // Saturado: Congelar el integrador
+    } else {
+        u_i = u_i_tentativo; // No saturado: Integrar normal
+    }
+
+    u_n = u_p + u_i + u_d;
+    */
+
     // =====================================================
     // SATURACIÓN Y CONVERSIÓN A PWM
     // =====================================================
