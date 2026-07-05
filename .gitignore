@@ -1,0 +1,19 @@
+# Archivos gigantes y basuras
+*.zip
+*.rar
+TDC_POR/
+TDC_POR.zip
+
+# MATLAB / Simulink
+*.slxc
+slprj/
+*.mat
+*.autosave
+
+# Arduino
+build/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db

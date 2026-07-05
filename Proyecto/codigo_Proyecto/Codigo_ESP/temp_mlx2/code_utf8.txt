@@ -1,0 +1,27 @@
+﻿IdentificaciÃ³n de fricciÃ³n y diseÃ±o PID para planta angularLive script documentado por secciones. Ejecuta cada secciÃ³n en orden, revisando las figuras y los mensajes que aparecen en consola antes de avanzar.IDENTIFICACIÃ“N DE FRICCIÃ“N Y DISEÃ‘O PID PARA PLANTA ANGULARObjetivo del live script: identificar la fricciÃ³n viscosa del sistema usando datos experimentales, validar el parÃ¡metro estimado con Simulink, obtener una planta linealizada y diseÃ±ar un controlador PID. La organizaciÃ³n por secciones permite ejecutar el archivo paso a paso y verificar cada resultado antes de continuar.1. PARÃMETROS FÃSICOS DEL SISTEMAEn esta secciÃ³n se declaran las constantes fÃ­sicas del montaje. Estos valores se usan durante todo el archivo, por eso conviene dejarlos al inicio. La inercia J se calcula como la suma de la inercia de la barra y la contribuciÃ³n aproximada del motor-hÃ©lice como masa puntual.2. CARGA Y PREPROCESAMIENTO DE DATOS EXPERIMENTALESAquÃ­ se importan los datos desde Excel y se limpian antes de usarlos. El archivo espera que cada experimento estÃ© en una columna de la hoja indicada. TambiÃ©n se reconstruye el tiempo suponiendo un muestreo constante de 10 ms. 360
+    Angulo = Angulo * 1e-3;
+end]]>3. ESTIMACIÃ“N DE LA FRICCIÃ“N VISCOSALa fricciÃ³n se obtiene a partir del decaimiento de la oscilaciÃ³n libre. Primero se centra la seÃ±al respecto al equilibrio, luego se calcula una envolvente experimental y finalmente se ajusta una exponencial a los picos detectados. umbral;
+peaks = peaks(idx_picos);
+t_picos = t_picos(idx_picos);
+
+if numel(peaks) 4. VALIDACIÃ“N DE LA FRICCIÃ“N EN SIMULINKCon el valor estimado de fricciÃ³n se ejecuta el modelo de Simulink y se compara la respuesta simulada contra los datos experimentales. Esta grÃ¡fica permite revisar si el parÃ¡metro b_p representa adecuadamente la disipaciÃ³n del sistema real.Sistema no lineal5. PLANTA LINEALIZADA PARA DISEÃ‘O DEL CONTROLADORPara diseÃ±ar el PID se usa una aproximaciÃ³n lineal alrededor de un punto de operaciÃ³n. La planta resultante se expresa como funciÃ³n de transferencia con salida en grados, lo que facilita comparar la simulaciÃ³n con las mediciones.6. DISEÃ‘O DEL PID POR LUGAR DE RAÃCESEl diseÃ±o se realiza de forma progresiva: primero se escoge Kp, luego Ki para eliminar error estacionario, y finalmente Kd para modificar la dinÃ¡mica transitoria. El derivativo se implementa con filtro para evitar amplificar ruido.7. SIMULACIÃ“N DEL LAZO CERRADO EN SIMULINKCon las ganancias seleccionadas se simula el modelo de lazo cerrado. Se usa un cambio pequeÃ±o de referencia para validar que la salida siga correctamente el punto de operaciÃ³n.= t_step) = theta_step_deg;
+
+figure;
+hold on; grid on;
+plot(TiempoSim_lc, theta_ref_plot, '--', 'LineWidth', 1.5, ...
+    'DisplayName', 'Referencia');
+plot(TiempoSim_lc, AnguloSim_lc, 'LineWidth', 1.5, ...
+    'DisplayName', 'Salida Simulink');
+xlabel('Tiempo [s]');
+ylabel('\theta [deg]');
+title('Respuesta del lazo cerrado en Simulink');
+legend('Location', 'best');]]>FUNCIONES AUXILIARESLas funciones auxiliares se dejan al final porque MATLAB permite funciones locales al final de un script. En este caso, la funciÃ³n leerSalidaSimulink evita repetir cÃ³digo para interpretar la salida simout.= 2
+        Tiempo = simout(:, 1);
+        Salida = simout(:, 2);
+    else
+        error('No se reconoce el formato de out.simout.');
+    end
+
+    Tiempo = Tiempo(:);
+    Salida = Salida(:);
+end]]>Notas de usoAntes de ejecutar el live script, verifica que el archivo Experimentos.xlsx estÃ© en la misma carpeta o en el path de MATLAB. TambiÃ©n revisa que los modelos de Simulink se llamen modelo_protyecot y lazo_cerrado, y que ambos exporten una variable simout mediante un bloque To Workspace.

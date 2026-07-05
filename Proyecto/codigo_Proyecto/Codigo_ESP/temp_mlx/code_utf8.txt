@@ -1,0 +1,328 @@
+﻿CaracterizaciÃ³n y diseÃ±o PID del pÃ©ndulo invertido con hÃ©liceVersiÃ³n corregida para que todas las respuestas dinÃ¡micas provengan de modelo_protyecot.slx. El Live Script identifica parÃ¡metros, prepara las entradas, ejecuta Simulink y compara la salida con los experimentos.CORRECCIONES PRINCIPALES1) La entrada ya no se trata como Constant: se detecta From Workspace y se le entrega la timeseries entradaPWM. 2) Los tres escalones se simulan directamente en Simulink. 3) Se elimina la integraciÃ³n ode45 de la planta dentro del Live Script. 4) La salida no se convierte dos veces a grados, porque el modelo ya contiene el bloque 180/pi. 5) Las condiciones iniciales se asignan a Integrator e Integrator1 en rad/s y rad.Ejecute las secciones en orden. El bloque To Workspace debe conservar Variable name = simout y Save format = Timeseries; por eso la interfaz de Simulink lo muestra como out.simout.0. OBJETIVO, ARCHIVOS Y CONVENCIONESDefine la finalidad del documento, las unidades y los dos archivos que deben estar junto al Live Script. TambiÃ©n aclara que la integraciÃ³n dinÃ¡mica se ejecuta Ãºnicamente con sim(). Subsystem -> Gain 180/pi
+%   -> To Workspace (variable simout; MATLAB la muestra como out.simout).
+%
+% Convenciones:
+%   theta, dtheta      : rad y rad/s dentro de Simulink.
+%   Ã¡ngulo experimental: grados.
+%   entradaPWM         : porcentaje de PWM.
+%   simout             : salida en grados, pues el modelo ya incluye 180/pi.
+
+clear; clc; close all; format compact;
+
+% Opciones de trabajo.
+abrirModelo = true;              % abre el modelo al preparar la conexiÃ³n
+cerrarModeloAlFinal = false;     % permite inspeccionarlo al terminar
+ensayoFriccionMostrar = 3;       % ensayo representativo entre 1 y 10
+
+% LocalizaciÃ³n robusta de los archivos.
+try
+    archivoActivo = matlab.desktop.editor.getActiveFilename;
+catch
+    archivoActivo = '';
+end
+if isempty(archivoActivo)
+    carpetaProyecto = pwd;
+else
+    carpetaProyecto = fileparts(archivoActivo);
+end
+addpath(carpetaProyecto);
+
+archivoDatos = fullfile(carpetaProyecto,'Experimentos.xlsx');
+modelo = 'modelo_protyecot';
+rutaModelo = fullfile(carpetaProyecto,[modelo '.slx']);
+
+assert(isfile(archivoDatos), ...
+    'No se encontrÃ³ Experimentos.xlsx en la carpeta del proyecto.');
+assert(isfile(rutaModelo), ...
+    'No se encontrÃ³ modelo_protyecot.slx en la carpeta del proyecto.');
+]]>1. CARGA Y NORMALIZACIÃ“N DE LOS EXPERIMENTOSCarga las oscilaciones libres, el ensayo cuasiestÃ¡tico y los tres historiales de escalÃ³n. Corrige las unidades y evita usar las celdas de tiempo daÃ±adas del archivo de fricciÃ³n. grados
+Nf = size(thetaF_deg,1);
+tF = (0:Nf-1)'*Ts;
+
+% 1.2 Ensayo cuasiestÃ¡tico para gravedad y ganancia de la hÃ©lice.
+Cest = readcell(archivoDatos,'Sheet','Experimento_ganancia_estatica');
+filasEst = 3:12;
+pwmEst = aNumero(Cest(filasEst,2));
+colsV = [3 6 9 12];
+colsAng = [4 7 10 13];
+colsTau = [5 8 11 14];
+VEst = nan(numel(filasEst),4);
+angEst_deg = nan(numel(filasEst),4);
+tauEst = nan(numel(filasEst),4);
+for r = 1:4
+    VEst(:,r) = aNumero(Cest(filasEst,colsV(r)));
+    angEst_deg(:,r) = aNumero(Cest(filasEst,colsAng(r)));
+    tauEst(:,r) = aNumero(Cest(filasEst,colsTau(r)));
+end
+% Algunas tensiones quedaron guardadas como 1332 en vez de 1.332 V.
+VEst(VEst>20) = VEst(VEst>20)/1000;
+
+% 1.3 Ensayos dinÃ¡micos con entrada PWM medida.
+hojasEscalon = ["Experimento_escalon_1", ...
+                "Experimento_escalon_2", ...
+                "Experimento_escalon_3"];
+stepData = cell(numel(hojasEscalon),1);
+for i = 1:numel(hojasEscalon)
+    stepData{i} = leerEscalon(archivoDatos,hojasEscalon(i));
+end
+
+fprintf('Datos cargados:\n');
+fprintf('  FricciÃ³n: %d muestras y %d repeticiones.\n', ...
+    Nf,size(thetaF_deg,2));
+fprintf('  CuasiestÃ¡tico: %d niveles de PWM y 4 repeticiones.\n', ...
+    numel(pwmEst));
+fprintf('  Escalones: %d ensayos.\n',numel(stepData));
+]]>2. CARACTERIZACIÃ“N CUASIESTÃTICAIdentifica el tÃ©rmino gravitacional Mgl y la ganancia torque/PWM compatible con el bloque Gain del modelo.0.03;
+MglMuestras = tauEst(validMgl)./sind(angEst_deg(validMgl));
+Mgl = median(MglMuestras,'omitnan');  % [N*m]
+
+% Apilar las cuatro repeticiones.
+pwmRep = repmat(pwmEst,4,1);
+VRep = VEst(:);
+tauVec = tauEst(:);
+valid = isfinite(pwmRep) & isfinite(VRep) & isfinite(tauVec);
+pwmRep = pwmRep(valid);
+VRep = VRep(valid);
+tauVec = tauVec(valid);
+
+% Ajuste lineal que pasa por el origen: es el compatible con el bloque Gain
+% del modelo de Simulink, que no contiene offset ni zona muerta.
+KtauPWM = (pwmRep'*tauVec)/(pwmRep'*pwmRep);  % [N*m/%PWM]
+KtauV = (VRep'*tauVec)/(VRep'*VRep);          % [N*m/V]
+tauHatOrigen = KtauPWM*pwmRep;
+R2_tau_origen = calcularR2(tauVec,tauHatOrigen);
+
+% Ajuste afÃ­n solo para diagnosticar offset/zona muerta del actuador real.
+betaPWM = [pwmRep ones(size(pwmRep))]\tauVec;
+KtauPWM_afin = betaPWM(1);
+tau0PWM = betaPWM(2);
+pwmMuertaEquiv = max(0,-tau0PWM/KtauPWM_afin);
+
+figure('Name','CaracterizaciÃ³n cuasiestÃ¡tica');
+tiledlayout(1,2);
+nexttile; hold on; grid on;
+scatter(pwmRep,tauVec,22,'filled','DisplayName','Datos');
+uPlot = linspace(0,max(pwmRep)*1.05,250);
+plot(uPlot,KtauPWM*uPlot,'LineWidth',1.6, ...
+    'DisplayName','Modelo usado en Simulink');
+plot(uPlot,KtauPWM_afin*uPlot+tau0PWM,'--','LineWidth',1.2, ...
+    'DisplayName','Ajuste afÃ­n de diagnÃ³stico');
+xlabel('PWM [%]'); ylabel('\tau_h [N m]');
+title(sprintf('Ganancia de hÃ©lice, R^2 = %.4f',R2_tau_origen));
+legend('Location','northwest');
+
+nexttile; hold on; grid on;
+scatter(angEst_deg(:),tauEst(:),22,'filled','DisplayName','Datos');
+aPlot = linspace(0,90,250);
+plot(aPlot,Mgl*sind(aPlot),'LineWidth',1.6, ...
+    'DisplayName','Mgl sin(\theta)');
+xlabel('\theta [deg]'); ylabel('\tau_g [N m]');
+title('TÃ©rmino gravitacional');
+legend('Location','northwest');
+
+fprintf('\nParÃ¡metros cuasiestÃ¡ticos:\n');
+fprintf('  Mgl                    = %.6e N*m\n',Mgl);
+fprintf('  Ktau_PWM para Simulink = %.6e N*m/%%PWM\n',KtauPWM);
+fprintf('  Ktau_V                 = %.6e N*m/V\n',KtauV);
+fprintf('  Zona muerta equivalente (diagnÃ³stico) = %.3f %%PWM\n', ...
+    pwmMuertaEquiv);
+]]>3. IDENTIFICACIÃ“N DE INERCIA Y FRICCIÃ“N VISCOSAObtiene J y b_p a partir del periodo y la envolvente de las oscilaciones libres. AquÃ­ no se simula la planta. max(1,0.04*max(pks));
+    pks = pks(keep);
+    locs = locs(keep);
+
+    if numel(pks)=3
+        Td(i) = median(diff(tF(locsPos)),'omitnan');
+        omegaD = 2*pi/Td(i);
+        Jexp(i) = Mgl/(sigma(i)^2+omegaD^2);
+        bexp(i) = 2*Jexp(i)*sigma(i);
+    end
+    peaksData{i} = [tF(locs) pks];
+end
+
+J = median(Jexp,'omitnan');
+b_p = median(bexp,'omitnan');
+assert(isfinite(J) && J>0,'No fue posible identificar una inercia vÃ¡lida.');
+assert(isfinite(b_p) && b_p>=0,'No fue posible identificar una fricciÃ³n vÃ¡lida.');
+
+tablaIdentificacion = table((1:nExpF)',sigma,Td,Jexp,bexp,R2_env, ...
+    thetaEqF_deg,omega0F_rad_s, ...
+    'VariableNames',{'Ensayo','sigma_1_s','Td_s','J_kgm2', ...
+    'b_Nms_rad','R2_envolvente','theta_eq_deg','omega0_rad_s'});
+disp(tablaIdentificacion);
+
+% Mostrar el procedimiento de identificaciÃ³n, sin simular la planta aquÃ­.
+i = ensayoFriccionMostrar;
+y = thetaF_deg(:,i);
+yc = y-thetaEqF_deg(i);
+pd = peaksData{i};
+figure('Name','IdentificaciÃ³n de fricciÃ³n'); hold on; grid on;
+plot(tF,y,'DisplayName',sprintf('Experimento %d',i));
+if ~isempty(pd) && isfinite(sigma(i))
+    Aenv = exp(mean(log(pd(:,2))+sigma(i)*pd(:,1)));
+    plot(pd(:,1),thetaEqF_deg(i)+pd(:,2),'o', ...
+        'DisplayName','Picos usados');
+    plot(tF,thetaEqF_deg(i)+Aenv*exp(-sigma(i)*tF),'--', ...
+        'DisplayName','Envolvente +');
+    plot(tF,thetaEqF_deg(i)-Aenv*exp(-sigma(i)*tF),'--', ...
+        'DisplayName','Envolvente -');
+end
+xlabel('Tiempo [s]'); ylabel('\theta [deg]');
+title('Datos usados para identificar J y b');
+legend('Location','best');
+
+fprintf('\nParÃ¡metros dinÃ¡micos identificados:\n');
+fprintf('  J   = %.6e kg*m^2\n',J);
+fprintf('  b_p = %.6e N*m*s/rad\n',b_p);
+]]>4. PARÃMETROS QUE RECIBE EL MODELO DE SIMULINKConvierte los parÃ¡metros identificados a las variables exactas que aparecen dentro del subsistema: J, b_p, k, g, masas y longitudes.0,'La masa equivalente calculada no es positiva.');
+
+parametrosModelo = table(J,b_p,k,g,m_barra,L_barra, ...
+    m_helice_motor,L_cm_helice,Mgl,KtauPWM, ...
+    'VariableNames',{'J','b_p','k','g','m_barra','L_barra', ...
+    'm_helice_motor','L_cm_helice','Mgl_identificado','Ktau_PWM'});
+disp(parametrosModelo);
+]]>5. CONEXIÃ“N REAL CON modelo_protyecot.slxDetecta el bloque From Workspace, los dos integradores y el bloque To Workspace. Esta secciÃ³n corrige el error causado por buscar un bloque Constant inexistente. From Workspace
+%   theta0_sim              -> Integrator1, condiciÃ³n inicial de posiciÃ³n
+%   omega0_sim              -> Integrator,  condiciÃ³n inicial de velocidad
+%   out.simout               out.simout\n',B.salida);
+
+if abrirModelo
+    open_system(modelo);
+end
+]]>6. VALIDACIÃ“N DE LOS DIEZ ENSAYOS DE FRICCIÃ“N EN SIMULINKEjecuta diez simulaciones del archivo SLX con entrada PWM igual a cero y compara la salida out.simout con cada mediciÃ³n.7. VALIDACIÃ“N DE LOS TRES ENSAYOS DE ESCALÃ“N EN SIMULINKEnvÃ­a cada historial PWM experimental al bloque From Workspace mediante una timeseries y compara la respuesta del modelo con el Ã¡ngulo medido.9. DISEÃ‘O ANALÃTICO DEL PID, SIN SIMULACIÃ“N EN MATLABCalcula las ganancias alrededor de 70 grados. La verificaciÃ³n temporal del PID se reserva para un futuro modelo de lazo cerrado en Simulink.10. CIERRECierra opcionalmente el modelo y deja preparado el guardado de parÃ¡metros.FUNCIONES AUXILIARESContiene la detecciÃ³n de bloques, la preparaciÃ³n de SimulationInput, la ejecuciÃ³n de sim(), la lectura de simout y las mÃ©tricas de validaciÃ³n.0), ...
+        'El tiempo enviado a From Workspace debe ser estrictamente creciente.');
+
+    entradaPWM = timeseries(uEntrada,tEntrada);
+    entradaPWM = setinterpmethod(entradaPWM,'zoh');
+
+    simIn = Simulink.SimulationInput(modelo);
+
+    % Variables usadas por los bloques Gain del subsistema.
+    simIn = setVariable(simIn,'J',p.J);
+    simIn = setVariable(simIn,'b_p',p.b_p);
+    simIn = setVariable(simIn,'k',p.k);
+    simIn = setVariable(simIn,'g',p.g);
+    simIn = setVariable(simIn,'m_barra',p.m_barra);
+    simIn = setVariable(simIn,'L_barra',p.L_barra);
+    simIn = setVariable(simIn,'m_helice_motor',p.m_helice_motor);
+    simIn = setVariable(simIn,'L_cm_helice',p.L_cm_helice);
+
+    % SeÃ±al temporal y condiciones iniciales.
+    simIn = setVariable(simIn,'entradaPWM',entradaPWM);
+    simIn = setVariable(simIn,'theta0_sim',theta0);
+    simIn = setVariable(simIn,'omega0_sim',omega0);
+
+    simIn = setBlockParameter(simIn,B.entrada, ...
+        'VariableName','entradaPWM');
+    simIn = setBlockParameter(simIn,B.integradorVelocidad, ...
+        'InitialCondition','omega0_sim');
+    simIn = setBlockParameter(simIn,B.integradorPosicion, ...
+        'InitialCondition','theta0_sim');
+    % Compatibilidad entre versiones de MATLAB/Simulink:
+    % setBlockParameter admite un solo par parÃ¡metro-valor por llamada en
+    % algunas versiones. Por eso se configuran por separado.
+    simIn = setBlockParameter(simIn,B.salida, ...
+        'VariableName','simout');
+    simIn = setBlockParameter(simIn,B.salida, ...
+        'SaveFormat','Timeseries');
+
+    % El solver se ejecuta dentro de Simulink, no en el Live Script.
+    simIn = setModelParameter(simIn, ...
+        'StartTime','0', ...
+        'StopTime',num2str(tEntrada(end),'%.12g'), ...
+        'SolverType','Variable-step', ...
+        'Solver','ode45', ...
+        'MaxStep',num2str(pasoMax,'%.12g'), ...
+        'ReturnWorkspaceOutputs','on');
+
+    simOut = sim(simIn);
+    salida = simOut.get('simout');
+    [tSim,ySim_deg] = leerSalidaSimulink(salida);
+end
+
+
+function [t,y] = leerSalidaSimulink(salida)
+% Admite los formatos comunes del bloque To Workspace.
+    if isa(salida,'timeseries')
+        t = salida.Time(:);
+        y = squeeze(salida.Data);
+        y = y(:);
+    elseif isstruct(salida) && isfield(salida,'time') && ...
+            isfield(salida,'signals')
+        t = salida.time(:);
+        y = squeeze(salida.signals.values);
+        y = y(:);
+    elseif isnumeric(salida) && size(salida,2)>=2
+        t = salida(:,1);
+        y = salida(:,2);
+    else
+        error(['Formato de simout no reconocido. Configure To Workspace ' ...
+            'con Save format = Timeseries.']);
+    end
+
+    valid = isfinite(t) & isfinite(y);
+    t = t(valid);
+    y = y(valid);
+    [t,idx] = unique(t,'stable');
+    y = y(idx);
+end
+
+
+function M = metricasComparacion(y,yhat)
+    y = y(:);
+    yhat = yhat(:);
+    valid = isfinite(y) & isfinite(yhat);
+    y = y(valid);
+    yhat = yhat(valid);
+    e = yhat-y;
+
+    M.RMSE_deg = sqrt(mean(e.^2));
+    M.MAE_deg = mean(abs(e));
+    rango = max(y)-min(y);
+    if rango>eps
+        M.NRMSE_pct = 100*M.RMSE_deg/rango;
+    else
+        M.NRMSE_pct = NaN;
+    end
+    M.R2 = calcularR2(y,yhat);
+end
+
+
+function x = aNumero(C)
+% Convierte celdas con coma o punto decimal a double.
+    x = nan(size(C));
+    for k = 1:numel(C)
+        v = C{k};
+        if isnumeric(v) && isscalar(v)
+            x(k) = double(v);
+        elseif islogical(v) && isscalar(v)
+            x(k) = double(v);
+        elseif ischar(v) || (isstring(v) && isscalar(v))
+            x(k) = str2double(strrep(strtrim(string(v)),',','.'));
+        end
+    end
+end
+
+
+function D = leerEscalon(archivo,hoja)
+% Lee un ensayo y garantiza tiempo creciente desde cero.
+    M = readmatrix(archivo,'Sheet',hoja);
+    M = M(all(isfinite(M(:,1:3)),2),1:3);
+    [t,idx] = unique(M(:,1),'stable');
+    pwm = M(idx,2);
+    ang = M(idx,3);
+    [t,orden] = sort(t);
+    pwm = pwm(orden);
+    ang = ang(orden);
+    D = table(t,pwm,ang, ...
+        'VariableNames',{'Tiempo','PWM','Angulo'});
+end
+
+
+function R2 = calcularR2(y,yhat)
+    y = y(:);
+    yhat = yhat(:);
+    valid = isfinite(y) & isfinite(yhat);
+    y = y(valid);
+    yhat = yhat(valid);
+    den = sum((y-mean(y)).^2);
+    if den
